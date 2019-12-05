@@ -31,7 +31,6 @@ import torchvision.models as models
 
 
 
-sys.path.append('.')
 from efficientnet_pytorch import EfficientNet
 from efficientnet_pytorch.utils import load_pretrained_weights
 
@@ -152,7 +151,10 @@ def main_worker(gpu, ngpus_per_node, args):
     global best_acc1
     args.gpu = gpu
     params = {'num_classes':args.num_classes}
-
+    if args.pretrained:
+        params.update(pretrained=args.pretrained)
+    if args.finetune:
+        params.update(finetune=args.finetune)
     grayscale = 'gray' in args.arch
 
     model_name = args.arch.split('-gray', 1)[0]
@@ -174,9 +176,13 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # create model
     if 'efficientnet' in model_name:  # NEW
-        #  moved weights loading due to dataparallel different weights naming
-        print("=> creating model '{}'".format(model_name))
-        model = EfficientNet.from_name(model_name, override_params=params)
+        if args.pretrained:
+            model = EfficientNet.from_pretrained(model_name, **params)
+            print("=> using pre-trained model '{}'".format(model_name))
+        else:
+            
+            print("=> creating model '{}'".format(model_name))
+            model = EfficientNet.from_name(model_name, override_params=params)
 
     else:
         if args.pretrained == 'imagenet':
@@ -185,6 +191,14 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             print("=> creating model '{}'".format(model_name))
             model = models.__dict__[model_name](**params)
+
+    if args.finetune:
+            print(f'freezing layers')
+            for layer, param in model.named_parameters():
+                if 'fc' in layer :
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -217,16 +231,10 @@ def main_worker(gpu, ngpus_per_node, args):
         else:
             model = torch.nn.DataParallel(model).cuda()
 
-    if args.pretrained in model_name:
+    # if args.pretrained:
 
-        load_pretrained_weights(model, model_name, args.pretrained, load_fc=not args.drop_fc, finetune=args.finetune, advprop=args.advprop)
-        if args.finetune:
-            print(f'freezing layers')
-            for layer, param in model.named_parameters():
-                if 'fc' in layer :
-                    param.requires_grad = True
-                else:
-                    param.requires_grad = False
+    #     load_pretrained_weights(model, model_name, args.pretrained, load_fc=not args.drop_fc)
+        
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
@@ -428,7 +436,8 @@ def validate(val_loader, model, criterion, args,epoch = 0, writer=None):
             # compute output
             output = model(images)
             loss = criterion(output, target)
-
+            print(output)
+            print(target)
             # measure accuracy and record loss
             topk = min(2, args.num_classes)
             acc1, acc5 = accuracy(output, target, topk=(1, topk))

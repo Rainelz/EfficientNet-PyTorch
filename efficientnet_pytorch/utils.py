@@ -349,8 +349,8 @@ def load_pretrained_weights(model, model_name, model_dict, load_fc=True, advprop
     else:
         model_path = Path(model_dict)
         assert model_path.is_file, f'Invalid path for model {model_dict}'
-        state_dict = torch.load(str(model_path))['state_dict']
-    
+        state_dict = torch.load(str(model_path), map_location='cpu')['state_dict']
+    state_dict = {k.replace('module.', ''):v for k,v in state_dict.items()}
     if load_fc:
         model.load_state_dict(state_dict)
     else:
