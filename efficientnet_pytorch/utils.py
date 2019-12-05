@@ -2,11 +2,12 @@
 This file contains helper functions for building the model and for loading model parameters.
 These helper functions are built to mirror those in the official TensorFlow implementation.
 """
-
 import re
 import math
 import collections
 from functools import partial
+from pathlib import Path
+
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -21,7 +22,7 @@ from torch.utils import model_zoo
 GlobalParams = collections.namedtuple('GlobalParams', [
     'batch_norm_momentum', 'batch_norm_epsilon', 'dropout_rate',
     'num_classes', 'width_coefficient', 'depth_coefficient',
-    'depth_divisor', 'min_depth', 'drop_connect_rate', 'image_size'])
+    'depth_divisor', 'min_depth', 'drop_connect_rate', 'image_size', 'in_ch'])
 
 # Parameters for an individual model block
 BlockArgs = collections.namedtuple('BlockArgs', [
@@ -99,6 +100,20 @@ def get_same_padding_conv2d(image_size=None):
     else:
         return partial(Conv2dStaticSamePadding, image_size=image_size)
 
+def _tf_weight_init(m):
+    """ Reference: https://github.com/tensorflow/tpu/blob/master/models/official/mnasnet/mnasnet_model.py """
+    if isinstance(m, nn.Conv2d):
+        n_fan_out = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+        m.weight.data.normal_(0, math.sqrt(2.0 / n_fan_out))
+        if m.bias is not None: m.bias.data.zero_()
+    elif isinstance(m, nn.BatchNorm2d):
+        m.weight.data.fill_(1.0)
+        m.bias.data.zero_()
+    elif isinstance(m, nn.Linear):
+        n_fan_out = m.weight.size(0)
+        r = 1.0 / math.sqrt(n_fan_out)
+        m.weight.data.uniform_(-r, r)
+        m.bias.data.zero_()
 
 class Conv2dDynamicSamePadding(nn.Conv2d):
     """ 2D Convolutions like TensorFlow, for a dynamic image size """
@@ -160,6 +175,8 @@ class Identity(nn.Module):
 
 def efficientnet_params(model_name):
     """ Map EfficientNet model name to parameter coefficients. """
+    if 'gray' in model_name:
+        model_name=model_name.split('-gray', 1)[0]
     params_dict = {
         # Coefficients:   width,depth,res,dropout
         'efficientnet-b0': (1.0, 1.0, 224, 0.2),
@@ -252,7 +269,7 @@ class BlockDecoder(object):
 
 
 def efficientnet(width_coefficient=None, depth_coefficient=None, dropout_rate=0.2,
-                 drop_connect_rate=0.2, image_size=None, num_classes=1000):
+                 drop_connect_rate=0.2, image_size=None, in_ch=3, num_classes=1000):
     """ Creates a efficientnet model. """
 
     blocks_args = [
@@ -269,6 +286,7 @@ def efficientnet(width_coefficient=None, depth_coefficient=None, dropout_rate=0.
         dropout_rate=dropout_rate,
         drop_connect_rate=drop_connect_rate,
         # data_format='channels_last',  # removed, this is always true in PyTorch
+        in_ch=in_ch,
         num_classes=num_classes,
         width_coefficient=width_coefficient,
         depth_coefficient=depth_coefficient,
@@ -281,9 +299,10 @@ def efficientnet(width_coefficient=None, depth_coefficient=None, dropout_rate=0.
 
 
 def get_model_params(model_name, override_params):
-    """ Get the block args and global params for a given model """
+    """ Get the block args and global params for a given model """        
     if model_name.startswith('efficientnet'):
         w, d, s, p = efficientnet_params(model_name)
+
         # note: all models have drop connect rate = 0.2
         blocks_args, global_params = efficientnet(
             width_coefficient=w, depth_coefficient=d, dropout_rate=p, image_size=s)
@@ -319,17 +338,25 @@ url_map_advprop = {
     'efficientnet-b8': 'https://github.com/lukemelas/EfficientNet-PyTorch/releases/download/1.0/adv-efficientnet-b8-22a8fe65.pth',
 }
 
-
-def load_pretrained_weights(model, model_name, load_fc=True, advprop=False):
+def load_pretrained_weights(model, model_name, model_dict, load_fc=True, advprop=False):
     """ Loads pretrained weights, and downloads if loading for the first time. """
     # AutoAugment or Advprop (different preprocessing)
     url_map_ = url_map_advprop if advprop else url_map
-    state_dict = model_zoo.load_url(url_map_[model_name])
+
+    if model_dict == 'imagenet':
+        print("Loaded imagenet weights")
+        state_dict = model_zoo.load_url(url_map_[model_name])
+    else:
+        model_path = Path(model_dict)
+        assert model_path.is_file, f'Invalid path for model {model_dict}'
+        state_dict = torch.load(str(model_path))['state_dict']
+    
     if load_fc:
         model.load_state_dict(state_dict)
     else:
-        state_dict.pop('_fc.weight')
-        state_dict.pop('_fc.bias')
+        #print(state_dict)
+        state_dict.pop('module._fc.weight')
+        state_dict.pop('module._fc.bias')
         res = model.load_state_dict(state_dict, strict=False)
-        assert set(res.missing_keys) == set(['_fc.weight', '_fc.bias']), 'issue loading pretrained weights'
+        assert set(res.missing_keys) == set(['module._fc.weight', 'module._fc.bias']), 'issue loading pretrained weights'
     print('Loaded pretrained weights for {}'.format(model_name))

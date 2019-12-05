@@ -12,6 +12,7 @@ from .utils import (
     load_pretrained_weights,
     Swish,
     MemoryEfficientSwish,
+    _tf_weight_init
 )
 
 class MBConvBlock(nn.Module):
@@ -126,7 +127,7 @@ class EfficientNet(nn.Module):
         bn_eps = self._global_params.batch_norm_epsilon
 
         # Stem
-        in_channels = 3  # rgb
+        in_channels = self._global_params.in_ch 
         out_channels = round_filters(32, self._global_params)  # number of output channels
         self._conv_stem = Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False)
         self._bn0 = nn.BatchNorm2d(num_features=out_channels, momentum=bn_mom, eps=bn_eps)
@@ -161,6 +162,10 @@ class EfficientNet(nn.Module):
         self._fc = nn.Linear(out_channels, self._global_params.num_classes)
         self._swish = MemoryEfficientSwish()
 
+         # Weight initialization
+        for module in self.modules():
+            _tf_weight_init(module)
+        
     def set_swish(self, memory_efficient=True):
         """Sets swish function as memory efficient (for training) or standard (for export)"""
         self._swish = MemoryEfficientSwish() if memory_efficient else Swish()
@@ -206,15 +211,23 @@ class EfficientNet(nn.Module):
         return cls(blocks_args, global_params)
 
     @classmethod
-    def from_pretrained(cls, model_name, advprop=False, num_classes=1000, in_channels=3):
+    def from_pretrained(cls, model_name, advprop=False, num_classes=1000, in_channels=3, pretrained='imagenet',load_fc=True, finetune=False):
         model = cls.from_name(model_name, override_params={'num_classes': num_classes})
-        load_pretrained_weights(model, model_name, load_fc=(num_classes == 1000), advprop=advprop)
+
+        load_pretrained_weights(model, model_name, model_dict=pretrained, load_fc=load_fc, advprop=advprop)
         if in_channels != 3:
             Conv2d = get_same_padding_conv2d(image_size = model._global_params.image_size)
             out_channels = round_filters(32, model._global_params)
             model._conv_stem = Conv2d(in_channels, out_channels, kernel_size=3, stride=2, bias=False)
+        if finetune:
+            print(f'freezing layers')
+            for layer, param in model.named_parameters():
+                if 'fc' in layer :
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
         return model
-    
+
     @classmethod
     def get_image_size(cls, model_name):
         cls._check_model_name_is_valid(model_name)
@@ -225,5 +238,7 @@ class EfficientNet(nn.Module):
     def _check_model_name_is_valid(cls, model_name):
         """ Validates model name. """ 
         valid_models = ['efficientnet-b'+str(i) for i in range(9)]
+        valid_models_gray = [name+str('-gray') for name in valid_models]
+        valid_models += valid_models_gray
         if model_name not in valid_models:
             raise ValueError('model_name should be one of: ' + ', '.join(valid_models))
