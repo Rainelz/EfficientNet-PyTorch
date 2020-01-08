@@ -359,4 +359,4 @@ def load_pretrained_weights(model, model_name, model_dict, load_fc=True, advprop
         state_dict.pop('module._fc.bias')
         res = model.load_state_dict(state_dict, strict=False)
         assert set(res.missing_keys) == set(['module._fc.weight', 'module._fc.bias']), 'issue loading pretrained weights'
-    print('Loaded pretrained weights for {}'.format(model_name))
+    # print('Loaded pretrained weights for {}'.format(model_name))
