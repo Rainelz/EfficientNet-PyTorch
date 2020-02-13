@@ -115,6 +115,10 @@ def _tf_weight_init(m):
         m.weight.data.uniform_(-r, r)
         m.bias.data.zero_()
 
+def adv_prop_transform(img):
+    return img * 2.0 - 1.0
+
+    
 class Conv2dDynamicSamePadding(nn.Conv2d):
     """ 2D Convolutions like TensorFlow, for a dynamic image size """
 
@@ -355,8 +359,8 @@ def load_pretrained_weights(model, model_name, model_dict, load_fc=True, advprop
         model.load_state_dict(state_dict)
     else:
         #print(state_dict)
-        state_dict.pop('module._fc.weight')
-        state_dict.pop('module._fc.bias')
+        state_dict.pop('_fc.weight')
+        state_dict.pop('_fc.bias')
         res = model.load_state_dict(state_dict, strict=False)
-        assert set(res.missing_keys) == set(['module._fc.weight', 'module._fc.bias']), 'issue loading pretrained weights'
+        # assert set(res.missing_keys) == set(['module._fc.weight', 'module._fc.bias']), 'issue loading pretrained weights'
     # print('Loaded pretrained weights for {}'.format(model_name))

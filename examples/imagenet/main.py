@@ -32,7 +32,7 @@ import torchvision.models as models
 
 
 from efficientnet_pytorch import EfficientNet
-from efficientnet_pytorch.utils import load_pretrained_weights
+from efficientnet_pytorch.utils import load_pretrained_weights, adv_prop_transform
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
@@ -155,6 +155,8 @@ def main_worker(gpu, ngpus_per_node, args):
         params.update(pretrained=args.pretrained)
     if args.finetune:
         params.update(finetune=args.finetune)
+    if args.advprop:
+        params.update(advprop=args.advprop)
     grayscale = 'gray' in args.arch
 
     model_name = args.arch.split('-gray', 1)[0]
@@ -267,7 +269,7 @@ def main_worker(gpu, ngpus_per_node, args):
     testdir = os.path.join(args.data, 'test')
 
     if args.advprop:
-        normalize = transforms.Lambda(lambda img: img * 2.0 - 1.0)
+        normalize = transforms.Lambda(adv_prop_transform)
     else:
         normalize_rgb = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                          std=[0.229, 0.224, 0.225])
@@ -281,7 +283,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     if 'efficientnet' in model_name:
         image_size = image_crop = EfficientNet.get_image_size(args.arch)
-    else 
+    else:
         image_size = 256
         image_crop = 224
 
@@ -369,7 +371,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer = None)
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@2', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(len(train_loader), [batch_time, data_time, losses, top1,
                              top5], prefix="[GPU {}] - Epoch: [{}]".format(args.gpu,epoch))
 
@@ -390,7 +392,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer = None)
         loss = criterion(output, target)
 
         # measure accuracy and record loss
-        topk = min(2, args.num_classes)
+        topk = min(5, args.num_classes)
         acc1, acc5 = accuracy(output, target, topk=(1, topk))
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
@@ -407,11 +409,11 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer = None)
 
         if i % args.print_freq == 0 or i == len(train_loader)-1:
             progress.display(i)
-            niter = epoch*len(train_loader)+i
-        if writer:
-            writer.add_scalar('Train/Loss', loss.item(), niter)
-            writer.add_scalar('Train/Prec@1', acc1[0], niter)
-            writer.add_scalar('Train/Prec@5', acc5[0], niter)
+        niter = epoch*len(train_loader)+i
+    if writer:
+        writer.add_scalar('Train/Loss', losses.avg, epoch)
+        writer.add_scalar('Train/Prec@1', top1.avg, epoch)
+        writer.add_scalar('Train/Prec@5', top5.avg, epoch)
         #return loss.item(), images.size(0),  
 
 
@@ -419,7 +421,7 @@ def validate(val_loader, model, criterion, args,epoch = 0, writer=None):
     batch_time = AverageMeter('Time', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
-    top5 = AverageMeter('Acc@2', ':6.2f')
+    top5 = AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(len(val_loader), [batch_time, losses, top1, top5],
                              prefix='Validation: ')
 
@@ -436,10 +438,8 @@ def validate(val_loader, model, criterion, args,epoch = 0, writer=None):
             # compute output
             output = model(images)
             loss = criterion(output, target)
-            print(output)
-            print(target)
             # measure accuracy and record loss
-            topk = min(2, args.num_classes)
+            topk = min(5, args.num_classes)
             acc1, acc5 = accuracy(output, target, topk=(1, topk))
             losses.update(loss.item(), images.size(0))
             top1.update(acc1[0], images.size(0))
@@ -451,14 +451,14 @@ def validate(val_loader, model, criterion, args,epoch = 0, writer=None):
 
             if i % args.print_freq == 0 or i == len(val_loader)-1:
                 progress.display(i)
-        if writer:
-            writer.add_scalar('Val/Loss', losses.avg, epoch)
-            writer.add_scalar('Val/Prec@1', top1.avg, epoch)
-            writer.add_scalar('Val/Prec@2', top5.avg, epoch)
+    if writer:
+        writer.add_scalar('Val/Loss', losses.avg, epoch)
+        writer.add_scalar('Val/Prec@1', top1.avg, epoch)
+        writer.add_scalar('Val/Prec@5', top5.avg, epoch)
 
-        # TODO: this should also be done with the ProgressMeter
-        print(' * Acc@1 {top1.avg:.3f} Acc@2 {top5.avg:.3f}'
-              .format(top1=top1, top5=top5))
+    # TODO: this should also be done with the ProgressMeter
+    print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
+            .format(top1=top1, top5=top5))
 
     return top1.avg
 
@@ -518,8 +518,8 @@ class ProgressMeter(object):
 
 
 def adjust_learning_rate(optimizer, epoch, args):
-    """Sets the learning rate to the initial LR decayed by 10 every 30 epochs"""
-    lr = args.lr * (0.1 ** (epoch // 15))
+    """Sets the learning rate to the initial LR decayed by 10 every 20 epochs"""
+    lr = args.lr * (0.1 ** (epoch // 20))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
