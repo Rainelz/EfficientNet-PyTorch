@@ -293,16 +293,16 @@ def main_worker(gpu, ngpus_per_node, args):
         traindir,
         transforms.Compose([
             convert,
-            transforms.RandomResizedCrop(image_crop),
+            transforms.Resize([image_size, image_size]),
             transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip(),
             transforms.ToTensor(),
             normalize,
         ]))
 
     val_transforms = transforms.Compose([
         convert,
-        transforms.Resize(image_size, interpolation=PIL.Image.BICUBIC),
-        transforms.CenterCrop(image_crop),
+        transforms.Resize([image_size, image_size], interpolation=PIL.Image.BICUBIC),
         transforms.ToTensor(),
         normalize,
     ])
