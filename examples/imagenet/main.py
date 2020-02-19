@@ -10,6 +10,7 @@ import random
 import shutil
 import time
 import warnings
+import numpy as np
 import PIL
 import PIL.Image
 PIL.Image.MAX_IMAGE_PIXELS=None
@@ -99,15 +100,6 @@ parser.add_argument('--finetune', action='store_true',
 
 best_acc1 = 0
 
-cache = {}
-
-def cache_img(path):
-    global cache
-    if not path in cache.keys():
-        cache[path] = datasets.folder.pil_loader(path)
-    return cache[path]
-    
-
 def main():
     args = parser.parse_args()
     
@@ -157,6 +149,8 @@ def main_worker(gpu, ngpus_per_node, args):
         params.update(finetune=args.finetune)
     if args.advprop:
         params.update(advprop=args.advprop)
+    if args.drop_fc:
+        params.update(load_fc=not args.drop_fc)
     grayscale = 'gray' in args.arch
 
     model_name = args.arch.split('-gray', 1)[0]
@@ -323,8 +317,8 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler)
 
     val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=args.batch_size, shuffle=False,
-        num_workers=1, pin_memory=True)
+        val_dataset, batch_size=args.batch_size, shuffle=(val_sampler is None),
+        num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
         test_loader = torch.utils.data.DataLoader(
@@ -386,7 +380,6 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer = None)
         if args.gpu is not None:
             images = images.cuda(args.gpu, non_blocking=True)
         target = target.cuda(args.gpu, non_blocking=True)
-
         # compute output
         output = model(images)
         loss = criterion(output, target)
@@ -394,6 +387,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args, writer = None)
         # measure accuracy and record loss
         topk = min(5, args.num_classes)
         acc1, acc5 = accuracy(output, target, topk=(1, topk))
+
         losses.update(loss.item(), images.size(0))
         top1.update(acc1[0], images.size(0))
         top5.update(acc5[0], images.size(0))
@@ -424,10 +418,10 @@ def validate(val_loader, model, criterion, args,epoch = 0, writer=None):
     top5 = AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(len(val_loader), [batch_time, losses, top1, top5],
                              prefix='Validation: ')
-
+    n_classes =  args.num_classes
     # switch to evaluate mode
     model.eval()
-
+    conf_matrix = torch.zeros(n_classes, n_classes)
     with torch.no_grad():
         end = time.time()
         for i, (images, target) in enumerate(val_loader):
@@ -437,6 +431,7 @@ def validate(val_loader, model, criterion, args,epoch = 0, writer=None):
 
             # compute output
             output = model(images)
+            conf_matrix = confusion_matrix(output, target, conf_matrix)
             loss = criterion(output, target)
             # measure accuracy and record loss
             topk = min(5, args.num_classes)
@@ -455,11 +450,10 @@ def validate(val_loader, model, criterion, args,epoch = 0, writer=None):
         writer.add_scalar('Val/Loss', losses.avg, epoch)
         writer.add_scalar('Val/Prec@1', top1.avg, epoch)
         writer.add_scalar('Val/Prec@5', top5.avg, epoch)
-
     # TODO: this should also be done with the ProgressMeter
     print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
             .format(top1=top1, top5=top5))
-
+    print(np.matrix(conf_matrix.data.tolist()))
     return top1.avg
 
 
@@ -519,7 +513,7 @@ class ProgressMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, args):
     """Sets the learning rate to the initial LR decayed by 10 every 20 epochs"""
-    lr = args.lr * (0.1 ** (epoch // 20))
+    lr = args.lr * (0.1 ** (epoch // 10))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
@@ -540,6 +534,12 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
+def confusion_matrix(preds, labels, conf_matrix):
 
+    preds = torch.argmax(preds, 1)
+    for p, t in zip(preds, labels):
+        conf_matrix[p, t] += 1
+
+    return conf_matrix
 if __name__ == '__main__':
     main()
