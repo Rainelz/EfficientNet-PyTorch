@@ -262,16 +262,14 @@ def main_worker(gpu, ngpus_per_node, args):
     valdir = os.path.join(args.data, 'val')
     testdir = os.path.join(args.data, 'test')
 
-    if args.advprop:
-        normalize = transforms.Lambda(adv_prop_transform)
-    else:
-        normalize_rgb = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                         std=[0.229, 0.224, 0.225])
+    
+    normalize_rgb = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                        std=[0.229, 0.224, 0.225])
 
-        normalize_gray = transforms.Normalize(mean=[0.5, 0.5, 0.5],
-                                          std=[0.5, 0.5, 0.5])
+    normalize_gray = transforms.Normalize(mean=[0.5, 0.5, 0.5],
+                                        std=[0.5, 0.5, 0.5])
 
-        normalize = normalize_gray if grayscale else normalize_rgb
+    normalize = normalize_gray if grayscale else normalize_rgb
 
     convert = transforms.Grayscale(num_output_channels=3) if grayscale else transforms.Lambda(lambda x : x)
 
@@ -321,8 +319,16 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
+        if args.advprop:
+            normalize = transforms.Lambda(adv_prop_transform)
+        test_transforms = transforms.Compose([
+        convert,
+        transforms.Resize([image_size, image_size], interpolation=PIL.Image.BICUBIC),
+        transforms.ToTensor(),
+        normalize,
+        ])
         test_loader = torch.utils.data.DataLoader(
-            datasets.ImageFolder(testdir, val_transforms),
+            datasets.ImageFolder(testdir, test_transforms),
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=True)
 
