@@ -1,5 +1,8 @@
 # EfficientNet PyTorch
+Starting from lukemelas' fork, I modified the repo to train my own efficient-net and eventually compare the results with other popular networks. 
+I tested the code only with 1 channel images and trained a model on rvl-cdip achieving 91.86 acc (B0) and 92.31 (B2), transferring from rvl-cdip to a custom dataset gave me 98% acc.  
 
+I am planning to refactor the code and eventually retrain on imagenet to compare against original results but I can't provide any ETA. 
 
 _IMPORTANT NOTE_: In the latest update, I switched hosting providers for the pretrained models, as the previous models were becoming extremely expensive to host. This _will_ break old versions of the library. I apologize, but I cannot afford to keep serving the models on the old provider. Everything should work properly if you update the library: 
 ```
